@@ -2,9 +2,33 @@ var docstate = require("./docstate")
     , nano = require("nano")
     ;
 
-var PUBLIC_HOST_URL = "http://localhost:5984/"
+var PUBLIC_HOST_URL = "http://localhost:5984/";
 
-function errLog(err, resp) {
+/*
+ * If this is a nano error, nano errors always have message and code
+ *
+ * Will look like this
+ *
+ * { "stack": "Error: Document update conflict. at gen_err(error.js:14:43)",
+ *   "message": "Document update conflict.",
+ *   "error": "conflict",
+ *   "http_code": 409,
+ *   "namespace": "couch",
+ *   "request": {
+ *       "method": "PUT",
+ *       "headers": {
+ *           "content-type": "application/json",
+ *           "accept": "application/json",
+ *           "authorization": "BasicYWRtaW46YWRtaW4=",
+ *           "content-length": 13
+ *       },
+ *       "body": {"foo": "baz"},
+ *       "uri": "http://admin:admin@localhost: 5984/doc_up1/foo",
+ *       "callback": [Function]
+ *   }
+ * }
+ */
+function errLog(err, doc, resp) {
   if (err) {
       if (err.message) {
           console.error(err.status_code, err.error, err.message)
@@ -17,9 +41,8 @@ function errLog(err, resp) {
 // todo move to nano
 // only works on urls like http://example.com/foobar
 function urlDb(url) {
-    url = url.split("/");
-    db = url.pop();
-    return nano(url.join('/')).use(db);
+    // implemented in nano 0.8.4
+    return nano(url);
 };
 
 
@@ -31,8 +54,10 @@ function sendEmail(address, code, cb) {
 
 function ensureUserDoc(userDb, name, fun) {
     var user_doc_id = "org.couchdb.user:"+name;
-    userDb.get(user_doc_id, function(err, r, userDoc) {
-        if (err && err.status_code == 404) {
+    // callback order was changed in 0.8.4
+    // the reason was exactly this, its more common to look at the doc than headers
+    userDb.get(user_doc_id, function(err, userDoc) {
+        if (err && err['status-code'] == 404) {
             fun(false, {
                 _id : user_doc_id,
                 type : "user",
@@ -92,7 +117,7 @@ function handleDevices(control, db, server) {
         var device_code = doc.device_code;
         // load the device doc with confirm_code == code
         // TODO use a real view
-        db.list({include_docs:true}, function(err, r, view) {
+        db.list({include_docs:true}, function(err, view) {
             var deviceDoc;
             view.rows.forEach(function(row) {
                if (row.doc.confirm_code && row.doc.confirm_code == confirm_code &&
@@ -158,7 +183,7 @@ function handleChannels(control, db, server) {
         if (doc["public"]) {
             errLog("PDI","please implement public databases")
         } else {
-            server.db.create(db_name, function(err, resp) {
+            server.db.create(db_name, function(err, body, resp) {
                 if (err && err.code != 412) {
                     // 412 means the db already exists, so we should still mark the channel ready.
                     errLog(err, resp);
